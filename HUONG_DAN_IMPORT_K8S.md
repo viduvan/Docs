@@ -2,10 +2,11 @@
 
 ## Tổng quan
 
-Import file `n8n_workflows_dump.sql` (dump từ tradeflat local) vào PostgreSQL trên K8s
+Import file `n8n_workflows_dump.sql` (dump từ tradeflat local) vào PostgreSQL trên K8s (OpenShift)
 để n8n UI hiển thị đầy đủ workflows.
 
 **File dump:** `~/FIS/n8n/database/n8n_workflows_dump.sql` (9.5MB, 33 workflows)
+**Nguồn dump:** `~/FIS/tradeflat/n8n/database/postgres_data/` (bản n8n cũ)
 
 ---
 
@@ -19,38 +20,77 @@ Import file `n8n_workflows_dump.sql` (dump từ tradeflat local) vào PostgreSQL
 > **QUAN TRỌNG:** N8N_ENCRYPTION_KEY phải GIỐNG NHAU giữa local và K8s.
 > Nếu khác nhau, n8n sẽ KHÔNG giải mã được credentials (API keys, tokens...)
 > trong workflows và sẽ báo lỗi khi chạy workflow.
-> 
+>
 > Hiện tại cả 2 đều dùng `N8N_ENCRYPTION_KEY_MASTER` → OK.
 
 ---
 
 ## Các bước thực hiện
 
-### Bước 1: Copy file SQL vào pod PostgreSQL trên K8s
+### Bước 0: Login vào OpenShift cluster
 
 ```bash
-# Tìm tên pod postgres trên K8s
-kubectl get pods -n fis-mbf-bidimex-uat | grep postgres
+# Login vào cluster
+oc login https://<cluster-url> -u <username> -p <password>
+
+# Hoặc login bằng token
+oc login --token=<token> --server=https://<cluster-url>
+
+# Chuyển sang đúng project (namespace)
+oc project fis-mbf-bidimex-uat
+```
+
+---
+
+### Bước 1: Tìm pod PostgreSQL
+
+```bash
+# Liệt kê tất cả pods trong project
+oc get pods | grep postgres
 
 # Kết quả ví dụ:
 # n8n-services-postgres-xxxxx-yyyyy   1/1   Running   0   10d
 
-# Copy file SQL vào pod
-kubectl cp ~/FIS/n8n/database/n8n_workflows_dump.sql \
-  fis-mbf-bidimex-uat/<tên-pod-postgres>:/tmp/n8n_workflows_dump.sql
+# Hoặc tìm chính xác hơn bằng label
+oc get pods -l app=n8n-services-postgres
 ```
 
-### Bước 2: Exec vào pod PostgreSQL và import
+Ghi lại tên pod, ví dụ: `n8n-services-postgres-xxxxx-yyyyy`
+
+---
+
+### Bước 2: Copy file SQL vào pod
 
 ```bash
-# Exec vào pod postgres
-kubectl exec -it <tên-pod-postgres> -n fis-mbf-bidimex-uat -- bash
+# Copy file SQL từ máy local vào pod postgres
+oc cp ~/FIS/n8n/database/n8n_workflows_dump.sql <tên-pod-postgres>:/tmp/n8n_workflows_dump.sql
 
-# Bên trong pod, chạy import:
+# Ví dụ thực tế:
+oc cp ~/FIS/n8n/database/n8n_workflows_dump.sql n8n-services-postgres-xxxxx-yyyyy:/tmp/n8n_workflows_dump.sql
+
+# Kiểm tra file đã copy thành công
+oc exec <tên-pod-postgres> -- ls -lh /tmp/n8n_workflows_dump.sql
+```
+
+---
+
+### Bước 3: Import database
+
+```bash
+# Exec vào pod và chạy import
+oc exec <tên-pod-postgres> -- psql -U postgres -d n8n -f /tmp/n8n_workflows_dump.sql
+
+# Hoặc exec vào pod rồi chạy từng lệnh (nếu muốn kiểm soát hơn)
+oc rsh <tên-pod-postgres>
+
+# Bên trong pod:
 psql -U postgres -d n8n < /tmp/n8n_workflows_dump.sql
 
 # Kiểm tra workflows đã có chưa
 psql -U postgres -d n8n -c "SELECT id, name, active FROM workflow_entity ORDER BY name;"
+
+# Đếm tổng workflows
+psql -U postgres -d n8n -c "SELECT count(*) as total_workflows FROM workflow_entity;"
 
 # Dọn file tạm
 rm /tmp/n8n_workflows_dump.sql
@@ -59,20 +99,31 @@ rm /tmp/n8n_workflows_dump.sql
 exit
 ```
 
-### Bước 3: Restart n8n pod để load lại data
+---
+
+### Bước 4: Restart n8n pod để load lại data
 
 ```bash
-# Restart n8n deployment (n8n sẽ đọc lại DB khi khởi động)
-kubectl rollout restart deployment/n8n-services -n fis-mbf-bidimex-uat
+# Cách 1: Restart deployment (rolling restart, không downtime)
+oc rollout restart deployment/n8n-services
 
-# Hoặc nếu dùng K8s mới (~/FIS/n8n/k8s/):
-kubectl rollout restart deployment/n8n-main -n default
+# Cách 2: Scale xuống 0 rồi lên lại (nếu cách 1 không hoạt động)
+oc scale deployment/n8n-services --replicas=0
+oc scale deployment/n8n-services --replicas=1
+
+# Cách 3: Xóa pod để K8s tự tạo lại
+oc delete pod <tên-pod-n8n>
 
 # Kiểm tra pod đã restart xong
-kubectl get pods -n fis-mbf-bidimex-uat | grep n8n
+oc get pods | grep n8n
+
+# Xem logs để đảm bảo n8n khởi động thành công
+oc logs -f deployment/n8n-services --tail=50
 ```
 
-### Bước 4: Kiểm tra trên n8n UI
+---
+
+### Bước 5: Kiểm tra trên n8n UI
 
 Truy cập n8n UI tại `https://157.10.186.122:3002/` → kiểm tra:
 - Tất cả 33 workflows có hiển thị
@@ -81,18 +132,43 @@ Truy cập n8n UI tại `https://157.10.186.122:3002/` → kiểm tra:
 
 ---
 
-## Cách gộp 1 lệnh (nếu đã quen)
+## Cách gộp 1 lệnh (copy-paste)
 
 ```bash
-# 1 lệnh duy nhất: copy + import + kiểm tra
-NAMESPACE=fis-mbf-bidimex-uat
-POD=$(kubectl get pods -n $NAMESPACE -l app=n8n-services-postgres -o jsonpath='{.items[0].metadata.name}')
+# Chuyển sang đúng project
+oc project fis-mbf-bidimex-uat
 
-kubectl cp ~/FIS/n8n/database/n8n_workflows_dump.sql $NAMESPACE/$POD:/tmp/dump.sql && \
-kubectl exec -n $NAMESPACE $POD -- psql -U postgres -d n8n -f /tmp/dump.sql && \
-kubectl exec -n $NAMESPACE $POD -- psql -U postgres -d n8n -c "SELECT count(*) as total_workflows FROM workflow_entity;" && \
-kubectl rollout restart deployment/n8n-services -n $NAMESPACE
+# Tìm pod postgres tự động
+POD=$(oc get pods -l app=n8n-services-postgres -o jsonpath='{.items[0].metadata.name}')
+echo "Pod postgres: $POD"
+
+# Copy + Import + Kiểm tra + Restart
+oc cp ~/FIS/n8n/database/n8n_workflows_dump.sql $POD:/tmp/dump.sql && \
+oc exec $POD -- psql -U postgres -d n8n -f /tmp/dump.sql && \
+oc exec $POD -- psql -U postgres -d n8n -c "SELECT count(*) as total_workflows FROM workflow_entity;" && \
+oc exec $POD -- rm /tmp/dump.sql && \
+oc rollout restart deployment/n8n-services
+
+echo "Import xong! Đợi n8n restart rồi kiểm tra UI."
 ```
+
+---
+
+## So sánh lệnh kubectl vs oc
+
+| Thao tác              | kubectl                                    | oc (OpenShift)                          |
+|-----------------------|--------------------------------------------|-----------------------------------------|
+| Login                 | Dùng kubeconfig                            | `oc login`                              |
+| Chọn namespace        | `kubectl -n <namespace>`                   | `oc project <namespace>`                |
+| Liệt kê pods         | `kubectl get pods`                         | `oc get pods`                           |
+| Copy file vào pod     | `kubectl cp file pod:/path`                | `oc cp file pod:/path`                  |
+| Exec vào pod          | `kubectl exec -it pod -- bash`             | `oc rsh pod` hoặc `oc exec pod --`      |
+| Xem logs              | `kubectl logs pod`                         | `oc logs pod`                           |
+| Restart deployment    | `kubectl rollout restart deployment/name`  | `oc rollout restart deployment/name`    |
+| Scale                 | `kubectl scale deployment/name --replicas` | `oc scale deployment/name --replicas`   |
+
+> Hầu hết lệnh `kubectl` và `oc` tương tự nhau.
+> `oc` có thêm một số lệnh riêng như `oc rsh` (remote shell), `oc new-app`, `oc project`.
 
 ---
 
@@ -101,10 +177,10 @@ kubectl rollout restart deployment/n8n-services -n $NAMESPACE
 ### Lỗi 1: "relation already exists"
 
 File dump có `--clean --if-exists` nên sẽ DROP bảng cũ trước khi tạo mới.
-Nếu vẫn lỗi, thêm flag:
+Nếu vẫn lỗi, bỏ qua lỗi:
 
 ```bash
-psql -U postgres -d n8n -v ON_ERROR_STOP=0 < /tmp/n8n_workflows_dump.sql
+oc exec <pod> -- psql -U postgres -d n8n -v ON_ERROR_STOP=0 -f /tmp/n8n_workflows_dump.sql
 ```
 
 ### Lỗi 2: "permission denied for schema public"
@@ -112,35 +188,44 @@ psql -U postgres -d n8n -v ON_ERROR_STOP=0 < /tmp/n8n_workflows_dump.sql
 User `n8n` không có quyền tạo bảng. Dùng user `postgres` (superuser):
 
 ```bash
-psql -U postgres -d n8n < /tmp/n8n_workflows_dump.sql
+oc exec <pod> -- psql -U postgres -d n8n -f /tmp/n8n_workflows_dump.sql
 ```
 
-### Lỗi 3: Credentials (API keys) bị lỗi sau import
+### Lỗi 3: "oc cp" bị lỗi tar
+
+```bash
+# Thử cách khác: pipe file qua stdin
+cat ~/FIS/n8n/database/n8n_workflows_dump.sql | oc exec -i <pod> -- tee /tmp/dump.sql > /dev/null
+
+# Rồi import bình thường
+oc exec <pod> -- psql -U postgres -d n8n -f /tmp/dump.sql
+```
+
+### Lỗi 4: Credentials (API keys) bị lỗi sau import
 
 N8N mã hóa credentials bằng `N8N_ENCRYPTION_KEY`.
-Nếu key khác nhau giữa local và K8s → credentials bị hỏng.
-
 Kiểm tra:
-- Local: `N8N_ENCRYPTION_KEY=N8N_ENCRYPTION_KEY_MASTER` (file ~/.env)
-- K8s: `N8N_ENCRYPTION_KEY=N8N_ENCRYPTION_KEY_MASTER` (file secret.yaml)
+- Local:  `N8N_ENCRYPTION_KEY=N8N_ENCRYPTION_KEY_MASTER` (file .env)
+- K8s:    `N8N_ENCRYPTION_KEY=N8N_ENCRYPTION_KEY_MASTER` (file secret.yaml)
 
-Nếu khớp → OK. Nếu không khớp → cần cập nhật lại credentials thủ công trên n8n UI.
+Nếu khớp → OK. Nếu không → cập nhật lại credentials thủ công trên n8n UI.
 
-### Lỗi 4: Workflow chạy nhưng gọi sai URL nội bộ
+### Lỗi 5: Workflow chạy nhưng gọi sai URL nội bộ
 
 Workflows có thể hardcode URL local (ví dụ `http://n8n-services:5678`).
-Trên K8s tên service có thể khác → cần sửa trong workflow nodes.
+Trên K8s tên service có thể khác → kiểm tra và sửa trong workflow nodes.
 
 ---
 
 ## Tóm tắt
 
 ```
-1. kubectl cp dump.sql vào pod postgres
-2. kubectl exec → psql import
-3. kubectl rollout restart n8n
-4. Kiểm tra trên UI
+1. oc login + oc project fis-mbf-bidimex-uat
+2. oc cp dump.sql vào pod postgres
+3. oc exec → psql import
+4. oc rollout restart n8n
+5. Kiểm tra trên UI
 ```
 
-Sau khi import, n8n sẽ đọc trực tiếp từ bảng `workflow_entity` trong PostgreSQL
+Sau khi import, n8n đọc trực tiếp từ bảng `workflow_entity` trong PostgreSQL
 và hiển thị tất cả workflows trên giao diện UI.
