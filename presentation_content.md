@@ -147,9 +147,32 @@ flowchart LR
 ```
 
 **Tại sao chọn Knowledge Distillation?**
-- Model lớn (117B) quá nặng để chạy local → cần "chưng cất" kiến thức vào model nhỏ (4B)
-- Student model chỉ cần 4GB VRAM để inference → triển khai trên máy local không cần GPU đắt tiền
-- Phương pháp này đã được chứng minh hiệu quả trong nhiều bài báo khoa học (Hinton et al., 2015)
+- Model lớn (117B) quá nặng để chạy local → cần "chưng cất" kiến thức vào model nhỏ (4B).
+- Student model chỉ cần 4GB VRAM để inference → triển khai trên máy local không cần GPU đắt tiền.
+
+> [!NOTE] 
+> **Cơ sở Toán học & Phương pháp (Black-box KD / Sequence-Level KD)**
+> Khác với KD truyền thống (tính KL-Divergence trên soft-logits của Teacher), với LLM thế hệ mới qua API, ta áp dụng **Black-box KD**. Teacher model chỉ cung cấp *hard labels* (văn bản text đầu ra — Golden Responses).
+> 
+> Hàm mục tiêu của Student trở thành Standard Causal Language Modeling Loss (Cross-Entropy) học theo phân phối từ của Teacher:
+> 
+> $$ \mathcal{L}_{SFT} = - \sum_{i=1}^{N} \log P_{\theta}(y_i | x, y_{<i}) $$
+> 
+> *Trong đó:*
+> - $x$: Input (Tin tức tổng hợp, StockTwits, Reddit)
+> - $y$: Golden Response sinh bởi Teacher (gpt-oss-120b)
+> - $\theta$: Trọng số mạng nơ-ron của Student Model (Qwen3-4B)
+
+> [!TIP]
+> **Ví dụ Tính Toán Hiệu Quả Chi Phí (ROI) của Distillation**
+> - **Chi phí "Chưng cất" (Tạo 1440 mẫu Golden Dataset)**:
+>   - 1440 samples × ~1,500 tokens/sample = **~2.16 triệu tokens**.
+>   - Với giá API khoảng $1/1M tokens → **Chi phí 1 lần duy nhất: ~$2.16**.
+> - **Chi phí Vận hành (Nếu KHÔNG dùng KD, phải gọi trực tiếp API)**:
+>   - Giả sử hệ thống phân tích 60 tickers × 7 ngày × 52 tuần = 21,840 reports/năm.
+>   - Tổng tokens cần sinh: 21,840 × 1,500 = **32.7 triệu tokens**.
+>   - Chi phí API hàng năm: **~$32.7/năm** (Và còn tăng lên nếu tăng tần suất, kèm độ trễ 2-5s/request).
+> - **Kết luận**: Bỏ ra ~$2 ban đầu tạo dữ liệu huấn luyện, ta thu được model chạy offline trọn đời với chi phí **$0** và tốc độ phản hồi cực nhanh (~0.3s).
 
 ### 2.2 QLoRA — Phương Pháp Fine-Tuning Hiệu Quả
 
@@ -181,8 +204,44 @@ flowchart TD
 | **VRAM cần thiết** | ~32-64 GB (A100 80GB) | **~8-12 GB** (T4 16GB đủ) |
 | **Thời gian train** | 12-24 giờ | **~2.5 giờ** |
 | **Chi phí GPU** | ~$50-100 (A100) | **~$5-10** (T4 trên Colab Pro) |
-| **Rủi ro Catastrophic Forgetting** | Cao (thay đổi toàn bộ weights) | **Thấp** (weights gốc frozen) |
+| **Rủi ro Catastrophic Forgetting**| Cao (thay đổi toàn bộ weights) | **Thấp** (weights gốc frozen) |
 | **Hiệu năng** | Tốt nhất | **95-99%** so với full FT |
+
+> [!NOTE]
+> **Ví Dụ Cụ Thể: Toán Học Giảm Tham Số Của LoRA**
+> 
+> Giả sử ta muốn cập nhật một ma trận Attention Weight (ví dụ `q_proj`) có kích thước $\Delta W \in \mathbb{R}^{d \times d}$, với chiều ẩn $d = 4096$.
+> 
+> **1. Full Fine-Tuning:**
+> - Cần huấn luyện và cập nhật ma trận có kích thước $4096 \times 4096$.
+> - Số lượng tham số (Parameters) = $4096 \times 4096 =$ **16,777,216** (~16.7 triệu tham số).
+> 
+> **2. Dùng LoRA (với Rank $r = 16$):**
+> - Phân tách $\Delta W = A \times B$.
+> - Ma trận hạ chiều $A \in \mathbb{R}^{4096 \times 16}$ $\rightarrow$ có $4096 \times 16 =$ **65,536** tham số.
+> - Ma trận tái chiều $B \in \mathbb{R}^{16 \times 4096}$ $\rightarrow$ có $16 \times 4096 =$ **65,536** tham số.
+> - Tổng tham số LoRA cần huấn luyện: $65,536 + 65,536 =$ **131,072** tham số.
+> 
+> **Kết quả:**
+> - Tỷ lệ tiết kiệm: $131,072 \div 16,777,216 \approx 0.0078$ (**Chỉ train 0.78% tham số của module đó!**).
+> - Tính toán đạo hàm, ma trận gradient và bộ nhớ lưu trữ AdamW optimizer giảm đi 128 lần.
+
+> [!TIP]
+> **Ví Dụ Tính Toán Mức Tiêu Thụ VRAM (4-bit Quantization)**
+> 
+> Đối với Model Base có quy mô **4 tỷ tham số (4B)**:
+> 
+> - **Nếu dùng Full Fine-Tuning (FP16):**
+>   - Base Model Weights: 4B × 2 bytes/param = **8 GB VRAM**.
+>   - Optimizer States (Adam) & Gradients: ~3 × 8GB = **24 GB VRAM**.
+>   - **Tổng cộng: ~32 GB VRAM** (Vượt quá card thông thường, bắt buộc phải thuê A100/V100 40GB).
+> 
+> - **Nếu dùng QLoRA (NF4 4-bit kết hợp LoRA):**
+>   - Base Model Weights (Đóng băng & Quantized 4-bit): 4B × 0.5 bytes = **2 GB VRAM**.
+>   - LoRA Adapters (~40M tham số train dạng FP16): ~40M × 2 bytes = **80 MB**.
+>   - Optimizer States (Adam 8-bit riêng cho LoRA): ~80MB × 2 = **160 MB**.
+>   - Context Memory (bộ nhớ cho activations): **~2-4 GB** tùy độ lớn batch.
+>   - **Tổng cộng: ~4.5 - 6 GB VRAM** (Vừa vặn trên các card tiêu chuẩn như Google Colab T4 16GB hoặc card cá nhân RTX 3060 12GB).
 
 ### 2.3 Cấu Hình Huấn Luyện Chi Tiết
 
