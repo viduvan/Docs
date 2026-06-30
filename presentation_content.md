@@ -7,6 +7,22 @@
 
 ---
 
+## BỐI CẢNH DỰ ÁN: TỪ CLOUD API ĐẾN LOCAL MODEL VÀ BÀI TOÁN FINE-TUNING
+
+Ban đầu, các hệ thống Multi-Agent thường sử dụng các API LLM thương mại lớn (như GPT-4, Claude) để đảm bảo chất lượng suy luận. Tuy nhiên, khi xây dựng và triển khai thực tế hệ thống **CryptoAgents**, chúng tôi quyết định chuyển sang sử dụng các **model open-source nhỏ (Small Language Models - SLMs) chạy local** vì 3 lý do cốt lõi:
+
+1. **Chi phí vận hành (Cost):** Hệ thống gồm 5 sub-agent hoạt động liên tục, thường xuyên quét và xử lý lượng dữ liệu đầu vào khổng lồ (tin tức, giá, mạng xã hội, báo cáo tài chính). Nếu dùng API trả phí, lượng token tiêu thụ mỗi ngày sẽ tạo ra gánh nặng chi phí khổng lồ, không khả thi để duy trì lâu dài.
+2. **Độ trễ và Giới hạn (Latency & Rate Limits):** Việc phụ thuộc vào API bên ngoài làm hệ thống dễ bị ảnh hưởng bởi độ trễ mạng và các giới hạn tốc độ (rate limit) của nhà cung cấp, làm giảm khả năng phản ứng theo thời gian thực của hệ thống giao dịch.
+3. **Tính tự chủ (Autonomy):** Việc chạy model local giúp hệ thống hoàn toàn độc lập, hoạt động 24/7 mà không phụ thuộc vào tình trạng server của bên thứ ba.
+
+**Vấn đề phát sinh (The Bottleneck):** 
+Để hệ thống có thể chạy mượt mà trên phần cứng phổ thông (VRAM hạn chế), chúng tôi phải chọn model có kích thước nhỏ gọn (cụ thể là **Qwen3-4B**). 
+Tuy nhiên, các model nhỏ bộc lộ giới hạn rõ rệt khi đối mặt với các nghiệp vụ phức tạp. Trong khi chúng xử lý khá tốt các tác vụ phân tích số liệu có cấu trúc định sẵn, thì đối với tác vụ **phân tích tâm lý thị trường (Sentiment Analysis)** — vốn đòi hỏi khả năng đọc hiểu ngôn ngữ tự nhiên từ nhiều nguồn phi cấu trúc hỗn loạn (Reddit, StockTwits, News), cross-reference để tìm mâu thuẫn và tổng hợp báo cáo — model nhỏ nguyên bản đã **thất bại nặng nề**.
+
+**➡️ Bài Toán Đặt Ra:** Chúng ta không thể quay lại sử dụng API đắt đỏ, nhưng cũng không thể chấp nhận sai số của model nhỏ nguyên bản. Do đó, giải pháp tối ưu và bắt buộc là phải **Fine-Tune (huấn luyện tinh chỉnh)** model open-source nhỏ này (áp dụng Knowledge Distillation từ model lớn) để nó sở hữu năng lực chuyên sâu cho nghiệp vụ Sentiment Analysis mà vẫn giữ được lợi thế chạy local chi phí thấp!
+
+---
+
 ## PHẦN 1: TẠI SAO CHỌN SENTIMENT ANALYST ĐỂ FINE-TUNE?
 
 ### 1.1 Kiến Trúc Hệ Thống CryptoAgents
