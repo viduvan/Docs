@@ -155,6 +155,7 @@ flowchart LR
 > Khác với KD truyền thống (tính KL-Divergence trên soft-logits của Teacher), với LLM thế hệ mới qua API, ta áp dụng **Black-box KD**. Teacher model chỉ cung cấp *hard labels* (văn bản text đầu ra — Golden Responses).
 > 
 > Hàm mục tiêu của Student trở thành Standard Causal Language Modeling Loss (Cross-Entropy) học theo phân phối từ của Teacher:
+> 
 > $$
 > \mathcal{L}_{SFT} = - \sum_{i=1}^{N} \log P_{\theta}(y_i | x, y_{<i})
 > $$
