@@ -291,18 +291,14 @@ flowchart TD
     subgraph Block ["Qwen3-4B Transformer Block"]
         subgraph Attention ["Multi-Head Self-Attention"]
             direction LR
-            Q["q_proj ★"]:::lora
-            K["k_proj ★"]:::lora
-            V["v_proj ★"]:::lora
+            Q["q_proj ★"]:::lora ~~~ K["k_proj ★"]:::lora ~~~ V["v_proj ★"]:::lora
         end
         
         O["o_proj ★"]:::lora
         
         subgraph FFN ["Feed-Forward Network"]
             direction LR
-            Gate["gate_proj ★"]:::lora
-            Up["up_proj ★"]:::lora
-            Down["down_proj ★"]:::lora
+            Gate["gate_proj ★"]:::lora ~~~ Up["up_proj ★"]:::lora ~~~ Down["down_proj ★"]:::lora
         end
         
         Attention --> O
@@ -311,7 +307,7 @@ flowchart TD
     
     FFN --> Output
     
-    classDef lora fill:#f9d0c4,stroke:#333,stroke-width:2px;
+    classDef lora fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000;
     %% (★) Indicates LoRA is applied
 ```
 
