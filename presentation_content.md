@@ -166,6 +166,19 @@ flowchart LR
 > - $\theta$: Trọng số mạng nơ-ron của Student Model (Qwen3-4B)
 
 > [!TIP]
+> **Ví Dụ Tính Toán Cụ Thể (Hàm Cross-Entropy)**
+> 
+> Giả sử Teacher nhận định xong và yêu cầu Student xuất ra 2 tokens: $y_1=$ `"Buy"`, $y_2=$ `"NVDA"`.
+> 
+> 1. **Dự đoán Token 1:** Dựa vào bài báo $x$, Student dự đoán từ `"Buy"` với xác suất **80%** ($P=0.8$).
+>    $\rightarrow$ **Loss 1** $= -\log(0.8) \approx 0.223$
+> 
+> 2. **Dự đoán Token 2:** Dựa vào bài báo $x$ và từ `"Buy"`, Student dự đoán từ `"NVDA"` với xác suất **50%** ($P=0.5$).
+>    $\rightarrow$ **Loss 2** $= -\log(0.5) \approx 0.693$
+> 
+> **Tổng Loss chuỗi:** $\mathcal{L}_{SFT} = 0.223 + 0.693 = \mathbf{0.916}$. Quá trình Train sẽ dùng đạo hàm để tinh chỉnh trọng số mạng nơ-ron, ép xác suất của "Buy NVDA" tăng dần lên 100% (Loss $\rightarrow 0$).
+
+> [!TIP]
 > **Ví dụ Tính Toán Hiệu Quả Chi Phí (ROI) của Distillation**
 > - **Chi phí "Chưng cất" (Tạo 1440 mẫu Golden Dataset)**:
 >   - 1440 samples × ~1,500 tokens/sample = **~2.16 triệu tokens**.

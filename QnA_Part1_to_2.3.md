@@ -24,6 +24,16 @@ Tài liệu này tổng hợp các câu hỏi hóc búa giảng viên có thể 
 > - $\theta$ là bộ trọng số của Student (Qwen3-4B).
 > 
 > Hàm này tính toán log xác suất để ép Student model (Qwen3-4B) phải dự đoán chính xác từng token tiếp theo giống y hệt như những gì Teacher đã phân tích.
+> 
+> **Ví dụ tính toán cụ thể:**
+> Giả sử Teacher phân tích xong và đưa ra kết luận (Golden Response) gồm 2 tokens là: $y_1=$ `"Buy"`, $y_2=$ `"NVDA"`.
+> - **Bước 1 (Dự đoán token 1):** Dựa vào tin tức tài chính đầu vào ($x$), Student model dự đoán xác suất từ tiếp theo là `"Buy"` đạt $0.8$ ($80\%$).
+>   $\rightarrow$ **Loss 1** $= -\log(0.8) \approx 0.223$
+> - **Bước 2 (Dự đoán token 2):** Dựa vào tin tức ($x$) và từ đã biết (`"Buy"`), Student dự đoán từ tiếp theo là `"NVDA"` với xác suất chỉ đạt $0.5$ ($50\%$).
+>   $\rightarrow$ **Loss 2** $= -\log(0.5) \approx 0.693$
+> - **Tổng Loss toàn chuỗi:** $\mathcal{L}_{SFT} = 0.223 + 0.693 = \mathbf{0.916}$
+> 
+> Mục tiêu của quá trình huấn luyện là sử dụng đạo hàm để tinh chỉnh trọng số (weights) sao cho tổng Loss này giảm **càng gần 0 càng tốt**. Khi Loss tiến về 0, đồng nghĩa với việc xác suất dự đoán đúng các từ `"Buy NVDA"` của Student sẽ tiến dần tới $1.0$ ($100\%$), tức là Student đã suy nghĩ y hệt như Teacher.
 
 ---
 
