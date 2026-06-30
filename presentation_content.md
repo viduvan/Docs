@@ -307,7 +307,6 @@ flowchart TD
     
     FFN --> Output
     
-```
     classDef lora fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000;
     %% (★) Indicates LoRA is applied
 ```
