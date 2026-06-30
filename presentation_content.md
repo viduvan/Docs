@@ -29,37 +29,35 @@ Tuy nhiên, các model nhỏ bộc lộ giới hạn rõ rệt khi đối mặt 
 
 Hệ thống CryptoAgents sử dụng kiến trúc **Multi-Agent** gồm 5 subagent chuyên biệt, mỗi agent đảm nhận một khía cạnh phân tích khác nhau:
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │           RESEARCH MANAGER              │
-                    │     (Điều phối toàn bộ phân tích)       │
-                    └──────────────┬──────────────────────────┘
-                                   │
-           ┌───────────────────────┼───────────────────────┐
-           │           │           │           │           │
-     ┌─────▼────┐ ┌───▼─────┐ ┌──▼──────┐ ┌──▼──────┐ ┌──▼──────────┐
-     │ Market   │ │ News    │ │Fundamen-│ │Quantita-│ │ Sentiment   │
-     │ Analyst  │ │ Analyst │ │ tals    │ │ tive    │ │ Analyst ★   │
-     │          │ │         │ │ Analyst │ │ Analyst │ │ (Fine-Tuned)│
-     │ qwen3:4b │ │qwen3:4b│ │qwen3:4b │ │qwen3:4b │ │sentiment-ft │
-     └─────┬────┘ └───┬─────┘ └──┬──────┘ └──┬──────┘ └──┬──────────┘
-           │           │          │           │            │
-           └───────────┼──────────┼───────────┼────────────┘
-                       │          │           │
-               ┌───────▼──────────▼───────────▼──────┐
-               │     BULL RESEARCHER  ←→  BEAR       │
-               │     (Tranh luận đầu tư đối kháng)   │
-               └────────────────┬────────────────────┘
-                                │
-               ┌────────────────▼────────────────────┐
-               │        RISK MANAGEMENT              │
-               │  (Aggressive / Neutral / Conservative)│
-               └────────────────┬────────────────────┘
-                                │
-               ┌────────────────▼────────────────────┐
-               │           TRADER                     │
-               │     Quyết định: BUY / HOLD / SELL   │
-               └─────────────────────────────────────┘
+```mermaid
+flowchart TD
+    RM["RESEARCH MANAGER<br/>(Điều phối toàn bộ phân tích)"]
+    
+    subgraph Analysts [Các Agents Phân Tích]
+        direction LR
+        MA["Market Analyst<br/>qwen3:4b"]
+        NA["News Analyst<br/>qwen3:4b"]
+        FA["Fundamentals Analyst<br/>qwen3:4b"]
+        QA["Quantitative Analyst<br/>qwen3:4b"]
+        SA["Sentiment Analyst ★<br/>sentiment-ft"]
+    end
+    
+    RM --> Analysts
+    
+    subgraph Debate [Tranh Luận Đầu Tư]
+        direction LR
+        BULL["BULL RESEARCHER"]
+        BEAR["BEAR RESEARCHER"]
+        BULL <-->|"Tranh luận đối kháng"| BEAR
+    end
+    
+    Analysts --> Debate
+    
+    RISK["RISK MANAGEMENT<br/>(Aggressive / Neutral / Conservative)"]
+    Debate --> RISK
+    
+    TRADER["TRADER<br/>Quyết định: BUY / HOLD / SELL"]
+    RISK --> TRADER
 ```
 
 ### 1.2 Lý Do Chọn Sentiment Analyst — Phân Tích Bottleneck
@@ -99,18 +97,22 @@ Khi chạy model gốc `qwen3:4b` trên tập test, Sentiment Analyst bộc lộ
 
 Sentiment Analyst nằm ở **tầng phân tích đầu tiên** (Tier 1), output của nó là **đầu vào trực tiếp** cho tầng tranh luận (Tier 2):
 
-```
-Tier 1: Sentiment Report (input chất lượng thấp)
-    │
-    ▼
-Tier 2: Bull Researcher đọc report → lập luận mua dựa trên tín hiệu SAI
-        Bear Researcher đọc report → phản biện dựa trên tín hiệu SAI
-    │
-    ▼
-Tier 3: Risk Management đánh giá rủi ro dựa trên tranh luận SAI
-    │
-    ▼
-Tier 4: Trader ra quyết định BUY/HOLD/SELL dựa trên toàn bộ chuỗi SAI
+```mermaid
+flowchart TD
+    T1["Tier 1: Sentiment Report<br/>(input chất lượng thấp)"]
+    
+    subgraph Tier2 [Tier 2: Debate]
+        BULL["Bull Researcher<br/>lập luận mua dựa trên tín hiệu SAI"]
+        BEAR["Bear Researcher<br/>phản biện dựa trên tín hiệu SAI"]
+    end
+    
+    T1 --> Tier2
+    
+    T3["Tier 3: Risk Management<br/>đánh giá rủi ro dựa trên tranh luận SAI"]
+    Tier2 --> T3
+    
+    T4["Tier 4: Trader<br/>ra quyết định BUY/HOLD/SELL dựa trên chuỗi SAI"]
+    T3 --> T4
 ```
 
 **Hiệu ứng Garbage-In-Garbage-Out**: Khi sentiment report sai ở Tier 1, toàn bộ chuỗi phân tích phía sau đều bị ảnh hưởng. Ngược lại, nếu cải thiện Sentiment Analyst, chất lượng phân tích của **toàn bộ pipeline** được nâng cao.
@@ -133,23 +135,15 @@ Tier 4: Trader ra quyết định BUY/HOLD/SELL dựa trên toàn bộ chuỗi S
 
 Phương pháp fine-tuning sử dụng kỹ thuật **Knowledge Distillation** (Chưng cất tri thức) kết hợp **QLoRA** (Quantized Low-Rank Adaptation):
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                     KNOWLEDGE DISTILLATION                              │
-│                                                                          │
-│   ┌─────────────────────┐           ┌─────────────────────────────┐     │
-│   │   TEACHER MODEL     │           │       STUDENT MODEL          │     │
-│   │                     │           │                              │     │
-│   │   gpt-oss-120b      │  ──────→  │   Qwen3-4B                  │     │
-│   │   (MoE 117B params, │  Golden   │   (4B params)               │     │
-│   │    5.1B active)      │  Responses│                              │     │
-│   │                     │           │   Học bắt chước output       │     │
-│   │   Host: FPT Cloud   │           │   của Teacher qua SFT        │     │
-│   └─────────────────────┘           └─────────────────────────────┘     │
-│                                                                          │
-│   Teacher tạo 1440 "Golden Responses"                                    │
-│   Student học theo format, phong cách và độ chính xác của Teacher        │
-└──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph KD [KNOWLEDGE DISTILLATION]
+        direction LR
+        Teacher["TEACHER MODEL<br/>gpt-oss-120b<br/>(MoE 117B params)<br/>Host: FPT Cloud"]
+        Student["STUDENT MODEL<br/>Qwen3-4B<br/>(4B params)<br/>Học bắt chước Teacher qua SFT"]
+        
+        Teacher -- "Tạo 1440 Golden Responses" --> Student
+    end
 ```
 
 **Tại sao chọn Knowledge Distillation?**
@@ -163,37 +157,20 @@ Phương pháp fine-tuning sử dụng kỹ thuật **Knowledge Distillation** (
 
 #### Cơ chế hoạt động:
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                    QWEN3-4B (4 Billion Parameters)                   │
-│                                                                      │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │   Base Weights (ĐÓNG BĂNG - Frozen)                            │  │
-│  │   - 4B tham số gốc được giữ nguyên, KHÔNG thay đổi            │  │
-│  │   - Được lượng tử hóa xuống 4-bit (NF4) để tiết kiệm RAM     │  │
-│  │   - 4B params × 4 bit = ~2GB VRAM thay vì 16GB (FP32)        │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │   LoRA Adapters (TRAINABLE - Huấn luyện)                       │  │
-│  │                                                                │  │
-│  │   Thay vì cập nhật ma trận W (d×d), LoRA phân tách:           │  │
-│  │                                                                │  │
-│  │        ΔW = A × B                                              │  │
-│  │                                                                │  │
-│  │   Trong đó:                                                    │  │
-│  │     W  ∈ ℝ^(d×d) — Ma trận trọng số gốc (hàng triệu params) │  │
-│  │     A  ∈ ℝ^(d×r) — Ma trận hạ chiều (d → r)                  │  │
-│  │     B  ∈ ℝ^(r×d) — Ma trận tái chiều (r → d)                 │  │
-│  │     r = 16       — Rank (hạng) — chỉ 16 chiều thay vì d      │  │
-│  │     α = 32       — Scaling factor (hệ số tỷ lệ)              │  │
-│  │                                                                │  │
-│  │   Số params cần train: 2 × d × r ≈ 0.5-1% tổng params       │  │
-│  │   → Chỉ ~20-40M params thay vì 4B params!                    │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│  Output cuối cùng = Base_output + (α/r) × ΔW × input               │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Input --> Base
+    Input --> LoRA
+    
+    subgraph QWEN ["QWEN3-4B (4 Billion Parameters)"]
+        Base["Base Weights (ĐÓNG BĂNG - Frozen)<br/>- 4B tham số gốc giữ nguyên<br/>- 4-bit NF4 Quantization<br/>- ~2GB VRAM"]
+        LoRA["LoRA Adapters (TRAINABLE - Huấn luyện)<br/>ΔW = A × B<br/>r = 16, α = 32<br/>~20-40M params (~1% tổng)"]
+    end
+    
+    Base --> Output
+    LoRA -- "× (α/r)" --> Output
+    
+    Output["Output = Base_output + (α/r) × ΔW × input"]
 ```
 
 #### Tại sao chọn QLoRA thay vì Full Fine-Tuning?
@@ -248,181 +225,145 @@ PLATFORM  = "Google Colab Pro"           # GPU: T4/L4/A100 (auto-detect)
 
 #### Giải thích các Target Modules:
 
-```
-                 Qwen3-4B Transformer Block
-                 ┌─────────────────────────────────────┐
-                 │                                     │
-Input ──────────▶│  Multi-Head Self-Attention           │
-                 │  ┌───────┐ ┌───────┐ ┌───────┐     │
-                 │  │q_proj │ │k_proj │ │v_proj │ ★   │  ← LoRA trên Q, K, V
-                 │  └───┬───┘ └───┬───┘ └───┬───┘     │
-                 │      │         │         │          │
-                 │      └─────────┼─────────┘          │
-                 │                │                     │
-                 │  ┌─────────────▼───────────────┐    │
-                 │  │         o_proj              │ ★  │  ← LoRA trên Output
-                 │  └─────────────┬───────────────┘    │
-                 │                │                     │
-                 │  ┌─────────────▼───────────────┐    │
-                 │  │    Feed-Forward Network       │    │
-                 │  │ ┌──────┐ ┌──────┐ ┌────────┐│    │
-                 │  │ │gate_ │ │ up_  │ │ down_  ││ ★  │  ← LoRA trên MLP
-                 │  │ │proj  │ │proj  │ │ proj   ││    │
-                 │  │ └──────┘ └──────┘ └────────┘│    │
-                 │  └─────────────┬───────────────┘    │
-                 │                │                     │
-Output ◀─────────│────────────────┘                     │
-                 └─────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Input --> Block
+    
+    subgraph Block ["Qwen3-4B Transformer Block"]
+        subgraph Attention ["Multi-Head Self-Attention"]
+            direction LR
+            Q["q_proj ★"]:::lora
+            K["k_proj ★"]:::lora
+            V["v_proj ★"]:::lora
+        end
+        
+        O["o_proj ★"]:::lora
+        
+        subgraph FFN ["Feed-Forward Network"]
+            direction LR
+            Gate["gate_proj ★"]:::lora
+            Up["up_proj ★"]:::lora
+            Down["down_proj ★"]:::lora
+        end
+        
+        Attention --> O
+        O --> FFN
+    end
+    
+    FFN --> Output
+    
+    classDef lora fill:#f9d0c4,stroke:#333,stroke-width:2px;
+    %% (★) Indicates LoRA is applied
 ```
 
 ### 2.4 Dữ Liệu Huấn Luyện
 
 #### Quy trình chuẩn bị dữ liệu (Data Pipeline):
 
-```
-Bước 1: Thu thập dữ liệu thô (01_collect_data.py)
-─────────────────────────────────────────────────
-  60 tickers × 24 tuần = ~1440 raw examples
-  
-  Nguồn:
-  ├── Yahoo Finance News   → Tiêu đề, tóm tắt bài báo
-  ├── StockTwits API       → Messages + label Bullish/Bearish
-  └── Reddit Public API    → Posts từ r/wallstreetbets, r/stocks, r/investing
-
-Bước 2: Sinh Golden Responses (01b_generate_golden.py)
-─────────────────────────────────────────────────────
-  1440 raw examples → gpt-oss-120b (FPT Cloud) → 1440 Golden Responses
-  
-  Mỗi Golden Response là bản phân tích sentiment hoàn chỉnh
-  gồm 5 phần do model Teacher (117B) sinh ra (chi tiết bên dưới).
+```mermaid
+flowchart TD
+    subgraph Step1 [Bước 1: Thu thập dữ liệu thô]
+        Raw["60 tickers × 24 tuần = ~1440 raw examples"]
+        
+        subgraph Sources [Nguồn dữ liệu]
+            direction LR
+            News["Yahoo Finance News<br/>(Tiêu đề, tóm tắt)"]
+            ST["StockTwits API<br/>(Messages + label)"]
+            Reddit["Reddit Public API<br/>(r/wallstreetbets, r/stocks, r/investing)"]
+        end
+        Sources --> Raw
+    end
+    
+    subgraph Step2 [Bước 2: Sinh Golden Responses]
+        GPT["gpt-oss-120b (FPT Cloud)"]
+        Golden["1440 Golden Responses<br/>(Bản phân tích 5 phần)"]
+    end
+    
+    Raw --> GPT --> Golden
 ```
 
 #### 5 Phần Bắt Buộc Trong Mỗi Golden Response
 
 Model Teacher (`gpt-oss-120b`) sinh ra mỗi Golden Response theo cấu trúc **5 phần bắt buộc** — đây chính là "khuôn mẫu vàng" mà Student model phải học theo:
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    CẤU TRÚC GOLDEN RESPONSE (5 PHẦN)                        │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ PHẦN 1: Overall Sentiment Direction (Hướng đi tổng thể)              │  │
-│  │                                                                        │  │
-│  │ Mục đích: Kết luận tổng quan — thị trường đang Bullish, Bearish,      │  │
-│  │           Neutral hay Mixed? Kèm ghi chú độ tin cậy dựa trên          │  │
-│  │           chất lượng và số lượng dữ liệu đầu vào.                     │  │
-│  │                                                                        │  │
-│  │ Ví dụ output:                                                          │  │
-│  │   "## Overall Sentiment Direction: **Bullish**                         │  │
-│  │    Confidence: Moderate-High. Based on 12 news articles,               │  │
-│  │    30 StockTwits messages (75% bullish), and 8 Reddit threads          │  │
-│  │    with active discussion."                                            │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ PHẦN 2: Source-by-Source Breakdown (Phân tích chi tiết từng nguồn)    │  │
-│  │                                                                        │  │
-│  │ Mục đích: Phân tích riêng biệt từng nguồn dữ liệu, chỉ ra mỗi       │  │
-│  │           nguồn "nói gì" với bằng chứng cụ thể (số liệu, trích dẫn). │  │
-│  │                                                                        │  │
-│  │ 3 nguồn được phân tích:                                                │  │
-│  │   📰 News (Yahoo Finance)   → Institutional framing, sự kiện chính    │  │
-│  │   💬 StockTwits             → Tỷ lệ Bullish/Bearish, trend retail     │  │
-│  │   🗣️ Reddit                 → Thảo luận cộng đồng, engagement score   │  │
-│  │                                                                        │  │
-│  │ Ví dụ output:                                                          │  │
-│  │   "### News (Yahoo Finance)                                            │  │
-│  │    12 articles found. 8 positive (67%), 3 neutral, 1 negative.         │  │
-│  │    Key headlines: 'NVDA partners with Corning on $500M deal'...        │  │
-│  │                                                                        │  │
-│  │    ### StockTwits                                                      │  │
-│  │    30 messages sampled. Bullish: 22 (73%), Bearish: 5 (17%)...         │  │
-│  │                                                                        │  │
-│  │    ### Reddit                                                          │  │
-│  │    8 posts across r/wallstreetbets (3), r/stocks (4), r/investing (1). │  │
-│  │    Top post: 'NVDA earnings beat expectations' (↑340, 198 comments)."  │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ PHẦN 3: Divergences, Alignments & Key Narratives                      │  │
-│  │         (Phân kỳ, đồng thuận & câu chuyện chủ đạo)                   │  │
-│  │                                                                        │  │
-│  │ Mục đích: Cross-reference giữa 3 nguồn — các nguồn có đồng thuận     │  │
-│  │           hay mâu thuẫn nhau? Xác định narrative chủ đạo đang          │  │
-│  │           chi phối thị trường.                                         │  │
-│  │                                                                        │  │
-│  │ Ví dụ output:                                                          │  │
-│  │   "## Divergences & Alignments                                         │  │
-│  │    **Alignment**: News và StockTwits đồng thuận bullish —              │  │
-│  │    tin tức tích cực về partnership được retail đón nhận nhiệt tình.    │  │
-│  │                                                                        │  │
-│  │    **Divergence**: Reddit r/wallstreetbets có tone thận trọng hơn,     │  │
-│  │    một số post cảnh báo 'priced in' với valuation P/E >40.            │  │
-│  │    Đây là tín hiệu contrarian — retail social media bullish           │  │
-│  │    nhưng cộng đồng thảo luận sâu hơn thì hoài nghi.                  │  │
-│  │                                                                        │  │
-│  │    **Key Narrative**: AI infrastructure spending là câu chuyện         │  │
-│  │    chủ đạo, xuất hiện ở cả 3 nguồn."                                 │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ PHẦN 4: Catalysts & Risks (Chất xúc tác & Rủi ro)                    │  │
-│  │                                                                        │  │
-│  │ Mục đích: Liệt kê các sự kiện/yếu tố có thể đẩy giá lên             │  │
-│  │           (catalysts) hoặc kéo giá xuống (risks) trong thời gian tới. │  │
-│  │                                                                        │  │
-│  │ Ví dụ output:                                                          │  │
-│  │   "## Catalysts & Risks                                                │  │
-│  │    **Catalysts (Tăng giá):**                                           │  │
-│  │    - Earnings report Q2 dự kiến 28/06 — consensus beat kỳ vọng        │  │
-│  │    - Partnership mới với Corning ($500M)                               │  │
-│  │    - AI inference demand tăng trưởng 40% YoY                          │  │
-│  │                                                                        │  │
-│  │    **Risks (Giảm giá):**                                               │  │
-│  │    - Valuation cao (P/E >40), rủi ro 'priced in'                      │  │
-│  │    - Quy định xuất khẩu chip mới sang Trung Quốc                     │  │
-│  │    - Cạnh tranh từ AMD MI300X tăng market share"                      │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ PHẦN 5: Markdown Summary Table (Bảng tổng hợp tín hiệu)              │  │
-│  │                                                                        │  │
-│  │ Mục đích: Bảng Markdown tóm tắt toàn bộ tín hiệu sentiment           │  │
-│  │           ở dạng có cấu trúc — giúp downstream agents (Bull/Bear      │  │
-│  │           Researcher) dễ dàng parse và trích xuất thông tin.           │  │
-│  │                                                                        │  │
-│  │ Ví dụ output:                                                          │  │
-│  │   | Signal          | Direction | Source     | Evidence              | │  │
-│  │   |:----------------|:----------|:-----------|:----------------------| │  │
-│  │   | News Framing    | Bullish   | Yahoo Fin. | 67% positive articles | │  │
-│  │   | Retail Sentiment| Bullish   | StockTwits | 73% bullish messages  | │  │
-│  │   | Community Mood  | Mixed     | Reddit     | WSB cautious, r/stocks│ │  │
-│  │   |                 |           |            | positive              | │  │
-│  │   | Upcoming Event  | Catalyst  | All Sources| Earnings 28/06        | │  │
-│  │   | Valuation Risk  | Bearish   | Reddit     | P/E >40 concerns      | │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  Tại sao phải có đúng 5 phần?                                               │
-│  → Downstream agents (Bull/Bear Researcher) cần parse output có cấu trúc.   │
-│  → Nếu thiếu phần nào, thông tin bị mất → phân tích không đầy đủ.          │
-│  → Structure Score đo chính xác: score = (số phần có) / 5.0                 │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+> ## CẤU TRÚC GOLDEN RESPONSE (5 PHẦN)
+> 
+> ### PHẦN 1: Overall Sentiment Direction (Hướng đi tổng thể)
+> - **Mục đích**: Kết luận tổng quan — thị trường đang Bullish, Bearish, Neutral hay Mixed? Kèm ghi chú độ tin cậy dựa trên chất lượng và số lượng dữ liệu đầu vào.
+> - **Ví dụ output**:
+>   > "## Overall Sentiment Direction: **Bullish**
+>   > Confidence: Moderate-High. Based on 12 news articles, 30 StockTwits messages (75% bullish), and 8 Reddit threads with active discussion."
+>
+> ### PHẦN 2: Source-by-Source Breakdown (Phân tích chi tiết từng nguồn)
+> - **Mục đích**: Phân tích riêng biệt từng nguồn dữ liệu, chỉ ra mỗi nguồn "nói gì" với bằng chứng cụ thể (số liệu, trích dẫn).
+> - **3 nguồn được phân tích**:
+>   - 📰 **News (Yahoo Finance)**: Institutional framing, sự kiện chính
+>   - 💬 **StockTwits**: Tỷ lệ Bullish/Bearish, trend retail
+>   - 🗣️ **Reddit**: Thảo luận cộng đồng, engagement score
+> - **Ví dụ output**:
+>   > "### News (Yahoo Finance)
+>   > 12 articles found. 8 positive (67%), 3 neutral, 1 negative. Key headlines: 'NVDA partners with Corning on $500M deal'...
+>   > 
+>   > ### StockTwits
+>   > 30 messages sampled. Bullish: 22 (73%), Bearish: 5 (17%)...
+>   > 
+>   > ### Reddit
+>   > 8 posts across r/wallstreetbets (3), r/stocks (4), r/investing (1). Top post: 'NVDA earnings beat expectations' (↑340, 198 comments)."
+>
+> ### PHẦN 3: Divergences, Alignments & Key Narratives (Phân kỳ, đồng thuận & câu chuyện chủ đạo)
+> - **Mục đích**: Cross-reference giữa 3 nguồn — các nguồn có đồng thuận hay mâu thuẫn nhau? Xác định narrative chủ đạo đang chi phối thị trường.
+> - **Ví dụ output**:
+>   > "## Divergences & Alignments
+>   > **Alignment**: News và StockTwits đồng thuận bullish — tin tức tích cực về partnership được retail đón nhận nhiệt tình.
+>   > 
+>   > **Divergence**: Reddit r/wallstreetbets có tone thận trọng hơn, một số post cảnh báo 'priced in' với valuation P/E >40. Đây là tín hiệu contrarian — retail social media bullish nhưng cộng đồng thảo luận sâu hơn thì hoài nghi.
+>   > 
+>   > **Key Narrative**: AI infrastructure spending là câu chuyện chủ đạo, xuất hiện ở cả 3 nguồn."
+>
+> ### PHẦN 4: Catalysts & Risks (Chất xúc tác & Rủi ro)
+> - **Mục đích**: Liệt kê các sự kiện/yếu tố có thể đẩy giá lên (catalysts) hoặc kéo giá xuống (risks) trong thời gian tới.
+> - **Ví dụ output**:
+>   > "## Catalysts & Risks
+>   > **Catalysts (Tăng giá):**
+>   > - Earnings report Q2 dự kiến 28/06 — consensus beat kỳ vọng
+>   > - Partnership mới với Corning ($500M)
+>   > - AI inference demand tăng trưởng 40% YoY
+>   > 
+>   > **Risks (Giảm giá):**
+>   > - Valuation cao (P/E >40), rủi ro 'priced in'
+>   > - Quy định xuất khẩu chip mới sang Trung Quốc
+>   > - Cạnh tranh từ AMD MI300X tăng market share"
+>
+> ### PHẦN 5: Markdown Summary Table (Bảng tổng hợp tín hiệu)
+> - **Mục đích**: Bảng Markdown tóm tắt toàn bộ tín hiệu sentiment ở dạng có cấu trúc — giúp downstream agents (Bull/Bear Researcher) dễ dàng parse và trích xuất thông tin.
+> - **Ví dụ output**:
+>   > | Signal          | Direction | Source     | Evidence              |
+>   > |:----------------|:----------|:-----------|:----------------------|
+>   > | News Framing    | Bullish   | Yahoo Fin. | 67% positive articles |
+>   > | Retail Sentiment| Bullish   | StockTwits | 73% bullish messages  |
+>   > | Community Mood  | Mixed     | Reddit     | WSB cautious, r/stocks positive |
+>   > | Upcoming Event  | Catalyst  | All Sources| Earnings 28/06        |
+>   > | Valuation Risk  | Bearish   | Reddit     | P/E >40 concerns      |
+>
+> ---
+> **Tại sao phải có đúng 5 phần?**
+> - Downstream agents (Bull/Bear Researcher) cần parse output có cấu trúc.
+> - Nếu thiếu phần nào, thông tin bị mất → phân tích không đầy đủ.
+> - **Structure Score** đo chính xác: `score = (số phần có) / 5.0`
 
 #### Quy trình chuẩn bị dữ liệu (Data Pipeline):
 
-```
-
-Bước 3: Chuẩn bị dataset (02_prepare_dataset.py)
-─────────────────────────────────────────────────
-  1440 Golden → Format ChatML → Validate → Shuffle (seed=42) → Split:
-  
-  ┌────────────┐  ┌───────────┐  ┌───────────┐
-  │  Training   │  │ Validation │  │   Test    │
-  │  80%        │  │   10%      │  │   10%     │
-  │  ~1152      │  │   ~144     │  │   ~144    │
-  │  examples   │  │  examples  │  │  examples │
-  └────────────┘  └───────────┘  └───────────┘
+```mermaid
+flowchart LR
+    subgraph Step3 [Bước 3: Chuẩn bị dataset]
+        direction LR
+        Golden["1440 Golden Responses"] --> Process["Format ChatML<br/>Validate<br/>Shuffle (seed=42)"]
+        Process --> Split["Split Dataset"]
+        
+        Split --> Train["Training<br/>80%<br/>~1152 examples"]
+        Split --> Val["Validation<br/>10%<br/>~144 examples"]
+        Split --> Test["Test<br/>10%<br/>~144 examples"]
+    end
 ```
 
 #### Định dạng dữ liệu — ChatML (Qwen3 Native):
@@ -448,28 +389,27 @@ Bước 3: Chuẩn bị dataset (02_prepare_dataset.py)
 
 ### 2.5 Quy Trình Triển Khai Sau Training
 
-```
-Training Output                    Deployment
-─────────────────                  ──────────────────────
-
-LoRA Adapter                       
-    │                              
-    ▼                              
-Merge với Base Weights             
-(adapter + frozen weights)         
-    │                              
-    ▼                              
-Full Merged Model (FP16)           
-    │                              
-    ▼                              
-Quantize → GGUF (Q4_K_M)     ──→  ollama create sentiment-analyst-ft
-    │                                        │
-    │   4-bit quantized                      ▼
-    │   ~2.5 GB file size              .env config:
-    │                                  TRADINGAGENTS_SENTIMENT_LLM=sentiment-analyst-ft
-    ▼                                        │
-Upload HuggingFace                           ▼
-viduvan/sentiment-analyst-ft          Chạy trong CryptoAgents Pipeline
+```mermaid
+flowchart TD
+    subgraph Training [Training Output]
+        Adapter["LoRA Adapter"]
+        Merge["Merge với Base Weights<br/>(adapter + frozen weights)"]
+        Full["Full Merged Model (FP16)"]
+        Quantize["Quantize → GGUF (Q4_K_M)<br/>4-bit quantized<br/>~2.5 GB file size"]
+        HF["Upload HuggingFace<br/>viduvan/sentiment-analyst-ft"]
+        
+        Adapter --> Merge --> Full --> Quantize --> HF
+    end
+    
+    subgraph Deploy [Deployment]
+        Ollama["ollama create sentiment-analyst-ft"]
+        Env[".env config:<br/>TRADINGAGENTS_SENTIMENT_LLM=..."]
+        Pipeline["Chạy trong CryptoAgents Pipeline"]
+        
+        Ollama --> Env --> Pipeline
+    end
+    
+    Quantize --> Ollama
 ```
 
 ---
@@ -553,27 +493,18 @@ def extract_sentiment_direction(response_text):
 
 **5 thành phần được kiểm tra**:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                 BÁO CÁO SENTIMENT                       │
-│                                                          │
-│  ① Overall Sentiment Direction                           │  ← Bullish/Bearish/Neutral/Mixed
-│     Keywords: "sentiment direction", "overall sentiment" │
-│                                                          │
-│  ② Source-by-Source Breakdown                            │  ← Phân tích từng nguồn
-│     Keywords: "breakdown", "source-by-source"            │
-│                                                          │
-│  ③ Divergence/Alignment Analysis                         │  ← So sánh giữa các nguồn
-│     Keywords: "divergence", "alignment", "mismatch"      │
-│                                                          │
-│  ④ Catalysts & Risks                                     │  ← Yếu tố tác động & rủi ro
-│     Keywords: "catalyst", "risk", "threat", "trigger"    │
-│                                                          │
-│  ⑤ Markdown Summary Table                                │  ← Bảng tóm tắt
-│     Detection: "|" character + "-" character present     │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
-```
+> **BÁO CÁO SENTIMENT (5 THÀNH PHẦN KIỂM TRA)**
+>
+> 1. **Overall Sentiment Direction** *(Bullish/Bearish/Neutral/Mixed)*
+>    - Keywords: `sentiment direction`, `overall sentiment`
+> 2. **Source-by-Source Breakdown** *(Phân tích từng nguồn)*
+>    - Keywords: `breakdown`, `source-by-source`
+> 3. **Divergence/Alignment Analysis** *(So sánh giữa các nguồn)*
+>    - Keywords: `divergence`, `alignment`, `mismatch`
+> 4. **Catalysts & Risks** *(Yếu tố tác động & rủi ro)*
+>    - Keywords: `catalyst`, `risk`, `threat`, `trigger`
+> 5. **Markdown Summary Table** *(Bảng tóm tắt)*
+>    - Detection: Có chứa ký tự `|` và `-` (định dạng bảng markdown)
 
 **Cách tính**:
 
@@ -659,29 +590,31 @@ scores = scorer.score(golden_reference, model_output)
 
 **Quy trình**:
 
-```
-20 mẫu ngẫu nhiên (random.seed=42)
-    │
-    ▼
-Gửi cho gpt-oss-120b:
-    ├── System Prompt gốc (context)
-    ├── User Prompt (input data)
-    ├── Golden Reference (bản mẫu chuẩn)
-    └── Student Response (output cần chấm)
-    │
-    ▼
-gpt-oss-120b chấm điểm JSON:
-{
-    "accuracy":      4.5,    ← Thông tin có chính xác không?
-    "evidence":      4.0,    ← Có dẫn chứng số liệu cụ thể không?
-    "structure":     5.0,    ← Có tuân thủ 5 phần format không?
-    "actionability": 3.5,    ← Có ứng dụng được cho giao dịch không?
-    "nuance":        4.0,    ← Có nắm bắt điểm mâu thuẫn ẩn không?
-    "justification": "..."   ← Lý do chấm điểm (text)
-}
-    │
-    ▼
-Average = (accuracy + evidence + structure + actionability + nuance) / 5.0
+```mermaid
+flowchart TD
+    Sample["20 mẫu ngẫu nhiên (random.seed=42)"]
+    
+    subgraph Input ["Gửi cho gpt-oss-120b:"]
+        direction LR
+        Sys["System Prompt gốc (context)"]
+        Usr["User Prompt (input data)"]
+        Gold["Golden Reference (bản mẫu chuẩn)"]
+        Resp["Student Response (output cần chấm)"]
+    end
+    
+    Sample --> Input
+    
+    subgraph Eval ["gpt-oss-120b chấm điểm JSON:"]
+        Acc["accuracy: 4.5<br/>(Thông tin có chính xác không?)"]
+        Evid["evidence: 4.0<br/>(Có dẫn chứng số liệu cụ thể không?)"]
+        Struct["structure: 5.0<br/>(Có tuân thủ 5 phần format không?)"]
+        Act["actionability: 3.5<br/>(Có ứng dụng được cho giao dịch không?)"]
+        Nua["nuance: 4.0<br/>(Có nắm bắt điểm mâu thuẫn ẩn không?)"]
+        Just["justification: '...'<br/>(Lý do chấm điểm)"]
+    end
+    
+    Input --> Eval
+    Eval --> Avg["Average = (accuracy + evidence + structure + actionability + nuance) / 5.0"]
 ```
 
 **5 tiêu chí đánh giá chi tiết**:
@@ -698,24 +631,20 @@ Average = (accuracy + evidence + structure + actionability + nuance) / 5.0
 
 Nguyên nhân chính: **Thinking Block Truncation**
 
-```
-Model Qwen3 có kiến trúc dual-mode:
-┌────────────────────────────────────────────────────┐
-│ <think>                                            │
-│   Đây là phần suy nghĩ nội bộ... (rất dài)        │  ← Tốn 500-1500 tokens
-│   Model phân tích từng nguồn, so sánh...           │
-│ </think>                                           │
-│                                                     │
-│ ## Overall Sentiment Direction: **Bullish**         │  ← Phần output thật
-│ ...                                                 │
-│ ## Source Breakdown                                  │
-│ ...                                                 │
-│ [BỊ CẮT ĐÂY do max_tokens=1500 cạn kiệt] ✂️      │  ← Truncation!
-└────────────────────────────────────────────────────┘
-
-→ Giải pháp: Tăng max_tokens = 3000 (đã áp dụng)
-   Khi đó GPT-Judge score kỳ vọng ≥ 3.5/5.0
-```
+> **Model Qwen3 có kiến trúc dual-mode:**
+>
+> `<think>`
+> *Đây là phần suy nghĩ nội bộ... (rất dài, tốn 500-1500 tokens)*
+> *Model phân tích từng nguồn, so sánh...*
+> `</think>`
+> 
+> `## Overall Sentiment Direction: **Bullish**` *(Phần output thật)*
+> `...`
+> `## Source Breakdown`
+> `...`
+> **[BỊ CẮT ĐÂY do max_tokens=1500 cạn kiệt] ✂️  ← Truncation!**
+>
+> **→ Giải pháp**: Tăng `max_tokens = 3000` (đã áp dụng). Khi đó GPT-Judge score kỳ vọng ≥ 3.5/5.0
 
 ### 3.3 Biểu Đồ So Sánh Trực Quan
 
@@ -737,29 +666,21 @@ GPT-Judge  ███████████░░░░░░░░░░░░
 
 ### 3.4 Go/No-Go Assessment — Kết Luận Tổng Thể
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│               GO / NO-GO ASSESSMENT RESULTS                  │
-│                                                              │
-│  ✅  Structure Score  : 0.934 ≥ 0.80   → PASSED              │
-│  ✅  Sentiment Acc    : 83.3% ≥ 70%    → PASSED              │
-│  ✅  ROUGE-1 F1       : 0.436 ≥ 0.35   → PASSED              │
-│  ⚠️  GPT-Judge Avg   : 2.99  ≈ 3.0    → MARGINAL (−0.007)   │
-│                                                              │
-│  ─────────────────────────────────────────────────────────   │
-│                                                              │
-│  📈 FT tốt hơn Baseline trên TẤT CẢ 4 metrics              │
-│  📈 Cải thiện trung bình: +37.5% (vượt ngưỡng 15%)          │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │        🎉 VERDICT: GO — APPROVE FOR DEPLOYMENT          │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                              │
-│  Lưu ý: GPT-Judge score sát ngưỡng do Thinking Block        │
-│  truncation tại max_tokens=1500. Đã khắc phục bằng          │
-│  cách tăng max_tokens=3000 cho phiên đánh giá tiếp theo.    │
-└──────────────────────────────────────────────────────────────┘
-```
+> ## 🎯 GO / NO-GO ASSESSMENT RESULTS
+> 
+> - ✅ **Structure Score** : `0.934` ≥ 0.80 → **PASSED**
+> - ✅ **Sentiment Acc**   : `83.3%` ≥ 70% → **PASSED**
+> - ✅ **ROUGE-1 F1**      : `0.436` ≥ 0.35 → **PASSED**
+> - ⚠️ **GPT-Judge Avg**  : `2.99` ≈ 3.0 → **MARGINAL (−0.007)**
+> 
+> ---
+> 
+> - 📈 **FT tốt hơn Baseline trên TẤT CẢ 4 metrics**
+> - 📈 **Cải thiện trung bình: +37.5% (vượt ngưỡng 15%)**
+> 
+> ### 🎉 VERDICT: GO — APPROVE FOR DEPLOYMENT
+> 
+> *Lưu ý: GPT-Judge score sát ngưỡng do Thinking Block truncation tại max_tokens=1500. Đã khắc phục bằng cách tăng max_tokens=3000 cho phiên đánh giá tiếp theo.*
 
 ### 3.5 Kỳ Vọng vs Thực Tế (Dựa Trên Literature)
 
