@@ -272,7 +272,7 @@ BATCH_SIZE      = 4                      # Batch size per device
 GRAD_ACCUM      = 4                      # Gradient accumulation steps
 EFFECTIVE_BATCH = 4 × 4 = 16            # Effective batch size
 LEARNING_RATE   = 2e-4                   # Learning rate (AdamW 8-bit)
-EPOCHS          = 3                      # Số epoch huấn luyện
+EPOCHS          = 5                      # Số epoch huấn luyện
 WARMUP_RATIO    = 0.05                   # 5% steps đầu warmup
 SCHEDULER       = "cosine"               # Cosine annealing LR schedule
 WEIGHT_DECAY    = 0.01                   # L2 regularization
@@ -307,9 +307,53 @@ flowchart TD
     
     FFN --> Output
     
+```
     classDef lora fill:#f9d0c4,stroke:#333,stroke-width:2px,color:#000;
     %% (★) Indicates LoRA is applied
 ```
+
+> [!NOTE]
+> **Giải Mã 7 Loại Ma Trận (Target Modules) Được Gắn LoRA Adapter**
+> 
+> Trong kiến trúc Qwen3-4B, mỗi Transformer Block chứa 7 ma trận tuyến tính (Linear layer) cốt lõi chi phối toàn bộ khả năng hiểu và sinh ngôn ngữ. Việc gắn LoRA vào **TẤT CẢ 7 loại ma trận này (phương pháp all-linear)** thay vì chỉ `q_proj` và `v_proj` như tiêu chuẩn cũ, giúp model học được các suy luận logic phức tạp của ngành tài chính với độ chính xác cao hơn rất nhiều.
+
+#### 1. Nhóm Ma Trận Attention (Nơi Model "Tập Trung" Sự Chú Ý)
+Cơ chế Multi-Head Self-Attention quyết định việc model liên kết các từ trong câu với nhau ra sao. Công thức cốt lõi: $\text{Attention}(Q,K,V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$.
+- **`q_proj` (Query - Câu hỏi)**: Đại diện cho "token hiện tại đang tìm kiếm thông tin gì?". Gắn LoRA giúp model điều chỉnh cách đặt câu hỏi tinh tế hơn (vd: khi đọc từ "NVDA", model sẽ tự động sinh Query tìm kiếm các từ khóa "earnings", "partnership" ở xung quanh).
+- **`k_proj` (Key - Chìa khóa)**: Đại diện cho "token này đang chứa đựng thông tin gì để trả lời cho token khác?". Gắn LoRA giúp model tinh chỉnh lại các "nhãn" thông tin để khớp với Query chuẩn xác hơn.
+- **`v_proj` (Value - Giá trị)**: Giá trị thực sự được trích xuất nếu Query và Key khớp nhau. Việc gắn LoRA ở đây vô cùng quan trọng để mô hình cập nhật trực tiếp nội dung ngữ nghĩa mới (vd: nhận định "priced in" là một tín hiệu Bearish tiềm ẩn).
+- **`o_proj` (Output - Tổng hợp)**: Tổng hợp thông tin từ nhiều Attention Heads lại thành một vector duy nhất. Gắn LoRA giúp tinh chỉnh cách model "chốt lại" ngữ cảnh trước khi đẩy sang mạng nơ-ron suy luận tiếp theo.
+
+#### 2. Nhóm Ma Trận FFN (Nơi Model "Lưu Trữ Tri Thức" & "Suy Luận")
+Mạng Feed-Forward Network (FFN) sử dụng kiến trúc SwiGLU. Đây là nơi chứa >60% tham số của model và đóng vai trò như "bộ nhớ tri thức".
+- **`gate_proj` (Cổng vào)**: Đóng vai trò như một bộ lọc (filter) kết hợp với hàm kích hoạt SiLU. Gắn LoRA giúp model học cách "mở cổng" cho các tín hiệu tài chính quan trọng và chặn các tín hiệu nhiễu (noise) từ mạng xã hội.
+- **`up_proj` (Khai triển)**: Phóng to số chiều của dữ liệu lên (thường gấp 3-4 lần) để mô hình có không gian tư duy rộng hơn, kết nối nhiều khái niệm phức tạp (như liên hệ giữa Lãi suất FED và Giá Crypto).
+- **`down_proj` (Thu gọn)**: Nén dữ liệu từ không gian chiều cao về lại không gian chiều gốc (VD: $d=4096$) để truyền sang block tiếp theo. Gắn LoRA giúp tinh chỉnh trực tiếp "kết luận" của mạng FFN.
+
+> [!TIP]
+> **Ví Dụ Tính Toán Cụ Thể (Attention Matrix `v_proj`)**
+> 
+> Lấy ma trận `v_proj` có kích thước: **(Input) 4096 × (Output) 4096**.
+> Khi có 1 token đầu vào (dạng vector $x \in \mathbb{R}^{1 \times 4096}$) đi qua module này:
+> 
+> 1. **Nếu KHÔNG có LoRA:** 
+>    $h_{base} = x \cdot W_{base}$
+>    *(Mô hình sử dụng trí tuệ nguyên bản, nhân với ma trận 16.7 triệu tham số đã bị khóa/frozen).*
+> 
+> 2. **Khi GẮN LoRA (với Rank $r=16$, Alpha $\alpha=32$):**
+>    Luồng dữ liệu rẽ làm 2 nhánh và tính toán song song:
+>    - **Nhánh 1 (Gốc):** $h_{base} = x \cdot W_{base}$ 
+>    - **Nhánh 2 (LoRA):** 
+>      - Cấu trúc: $y_{lora} = (x \cdot A) \cdot B$
+>      - **Hạ chiều:** $x' = x \cdot A$ (nhân ma trận $4096 \times 16$). Quá trình này nén vector $4096$ chiều xuống $16$ chiều. *Ý nghĩa: Ép model loại bỏ thông tin thừa, chỉ giữ lại những "ý chính" cốt lõi nhất của bài báo.*
+>      - **Tái chiều:** $y_{lora} = x' \cdot B$ (nhân ma trận $16 \times 4096$). Giải nén từ $16$ chiều về lại không gian $4096$ chiều.
+>      - **Scaling:** $y_{lora\_scaled} = y_{lora} \times \left(\frac{\alpha}{r}\right) = y_{lora} \times \left(\frac{32}{16}\right) = y_{lora} \times 2$. *(Khuếch đại tín hiệu mới học được lên gấp đôi để tác động mạnh hơn).*
+>    
+> 3. **Tổng hợp (Output cuối cùng):**
+>    $h_{final} = h_{base} + y_{lora\_scaled}$
+> 
+> **Hình ảnh trực quan (Analogy):** 
+> Giống như việc bạn có một cuốn bách khoa toàn thư đã in đóng bìa cứng ($W_{base}$). Bạn không thể tẩy xóa chữ in (Frozen), nên bạn viết những kiến thức tài chính mới vào một tờ giấy note nhỏ dán vào rìa trang sách (Ma trận $A$ và $B$). Khi đọc trang sách đó ($h_{final}$), bạn sẽ tự động tiếp thu cả kiến thức cũ trong sách cộng với ghi chú mới mẻ, cập nhật của mình!
 
 ### 2.4 Dữ Liệu Huấn Luyện
 
