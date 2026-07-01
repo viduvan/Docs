@@ -50,9 +50,11 @@ Tài liệu này tổng hợp các câu hỏi hóc búa giảng viên có thể 
 > Gradient **âm** ($-0.2$) báo hiệu cho mạng nơ-ron phải **TĂNG** điểm số của từ `"Buy"`. Gradient **dương** ($+0.2$) báo hiệu mạng nơ-ron phải **GIẢM** điểm số của từ `"Sell"`.
 > 
 > Sau đó, thuật toán Lan truyền ngược (Backpropagation) đưa Gradient này vào công thức cập nhật trọng số:
+> 
 > $$
 > W_{mới} = W_{cũ} - \eta \times \text{Gradient}
 > $$
+> 
 > *(Với $\eta$ là Learning Rate)*
 > 
 > Do Gradient của từ `"Buy"` là số âm, trừ đi số âm thành cộng, nên trọng số $W$ chi phối từ `"Buy"` sẽ được **tăng lên**. Ở lần dự đoán tiếp theo, xác suất của `"Buy"` sẽ nhích từ $0.8$ lên $0.85$, tiến tới mức lý tưởng là $1.0$.

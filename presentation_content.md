@@ -195,7 +195,11 @@ flowchart LR
 > - Gradient **dương** ($+0.2$): Báo hiệu mạng nơ-ron cần phải **GIẢM** điểm số của từ `"Sell"` xuống.
 > 
 > Thuật toán Lan truyền ngược (Backpropagation) sẽ truyền các Gradient này ngược về các lớp bên dưới. Trọng số (weights) $W$ chi phối trực tiếp đến các từ này sẽ được cập nhật theo công thức: 
-> $$ W_{mới} = W_{cũ} - \eta \times \text{Gradient} $$
+> 
+> $$
+> W_{mới} = W_{cũ} - \eta \times \text{Gradient}
+> $$
+> 
 > *(Với $\eta$ là Learning Rate)*. Vì Gradient của `"Buy"` là số âm, khi trừ đi số âm sẽ thành phép cộng $\rightarrow$ Trọng số của `"Buy"` được tăng lên. Ở lần huấn luyện tiếp theo, xác suất dự đoán `"Buy"` sẽ tăng từ $0.8$ lên $0.85$, $0.90$... dần tiến tới $1.0$.
 
 > [!TIP]
