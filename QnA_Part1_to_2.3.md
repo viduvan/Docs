@@ -37,6 +37,28 @@ Tài liệu này tổng hợp các câu hỏi hóc búa giảng viên có thể 
 
 ---
 
+### Câu hỏi 2b: Cụ thể quá trình dùng đạo hàm để tinh chỉnh trọng số (Gradient Descent) hoạt động như thế nào sau khi tính được Loss?
+**Cách trả lời (Tối ưu hóa - Optimization):**
+> Dạ thưa thầy, cốt lõi của việc cập nhật trọng số nằm ở công thức đạo hàm (Gradient) của hàm Cross-Entropy kết hợp với Softmax. Công thức đạo hàm theo điểm số đầu ra (logits) cực kỳ tối giản:
+> **$\text{Gradient} = \text{Xác suất Dự đoán} - \text{Thực tế}$**
+> 
+> Dựa vào ví dụ trên, giả sử từ điển chỉ có 2 từ `"Buy"` và `"Sell"`. Mô hình đang dự đoán $P(\text{"Buy"}) = 0.8$ và $P(\text{"Sell"}) = 0.2$. Từ đúng là `"Buy"`.
+> - Với từ đúng `"Buy"` (Thực tế = 1): Gradient $= 0.8 - 1 = \mathbf{-0.2}$
+> - Với từ sai `"Sell"` (Thực tế = 0): Gradient $= 0.2 - 0 = \mathbf{+0.2}$
+> 
+> **Ý nghĩa của Gradient:** 
+> Gradient **âm** ($-0.2$) báo hiệu cho mạng nơ-ron phải **TĂNG** điểm số của từ `"Buy"`. Gradient **dương** ($+0.2$) báo hiệu mạng nơ-ron phải **GIẢM** điểm số của từ `"Sell"`.
+> 
+> Sau đó, thuật toán Lan truyền ngược (Backpropagation) đưa Gradient này vào công thức cập nhật trọng số:
+> $$
+> W_{mới} = W_{cũ} - \eta \times \text{Gradient}
+> $$
+> *(Với $\eta$ là Learning Rate)*
+> 
+> Do Gradient của từ `"Buy"` là số âm, trừ đi số âm thành cộng, nên trọng số $W$ chi phối từ `"Buy"` sẽ được **tăng lên**. Ở lần dự đoán tiếp theo, xác suất của `"Buy"` sẽ nhích từ $0.8$ lên $0.85$, tiến tới mức lý tưởng là $1.0$.
+
+---
+
 ### Câu hỏi 3: QLoRA giảm tham số như thế nào? Tại sao lại chọn tham số Rank $r=16$?
 **Cách trả lời (Toán học Ma trận):**
 > Dạ, LoRA giảm tham số bằng cách không cập nhật toàn bộ ma trận gốc có kích thước $d \times d$ (ví dụ $4096 \times 4096 \approx 16.7$ triệu tham số). Thay vào đó, nó xấp xỉ ma trận thay đổi bằng tích của 2 ma trận nhỏ hơn: $A$ có kích thước ($4096 \times r$) và $B$ có kích thước ($r \times 4096$).

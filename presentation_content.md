@@ -178,6 +178,26 @@ flowchart LR
 > 
 > **Tổng Loss chuỗi:** $\mathcal{L}_{SFT} = 0.223 + 0.693 = \mathbf{0.916}$. Quá trình Train sẽ dùng đạo hàm để tinh chỉnh trọng số mạng nơ-ron, ép xác suất của "Buy NVDA" tăng dần lên 100% (Loss $\rightarrow 0$).
 
+> [!NOTE]
+> **Toán Học Của Việc Cập Nhật Trọng Số (Gradient Descent)**
+> 
+> Làm sao mô hình biết phải sửa trọng số nào để Loss giảm? Chìa khóa nằm ở **Đạo hàm (Gradient)**.
+> Dựa vào ví dụ Bước 1 ở trên, giả sử từ điển chỉ có 2 từ là `"Buy"` và `"Sell"`. Mô hình đưa ra xác suất: $P(\text{"Buy"}) = 0.8$, $P(\text{"Sell"}) = 0.2$. Từ mục tiêu (Target) là `"Buy"`.
+> 
+> Đạo hàm của hàm Cross-Entropy kết hợp Softmax theo điểm số đầu ra (logits) có một công thức cực kỳ tối giản:
+> **$\text{Gradient} = \text{Xác suất Dự đoán} - \text{Thực tế}$**
+> 
+> - Với từ đúng `"Buy"` (Thực tế = 1): Gradient $= 0.8 - 1 = \mathbf{-0.2}$
+> - Với từ sai `"Sell"` (Thực tế = 0): Gradient $= 0.2 - 0 = \mathbf{+0.2}$
+> 
+> **Ý nghĩa của con số này:**
+> - Gradient **âm** ($-0.2$): Báo hiệu mạng nơ-ron cần phải **TĂNG** điểm số của từ `"Buy"` lên.
+> - Gradient **dương** ($+0.2$): Báo hiệu mạng nơ-ron cần phải **GIẢM** điểm số của từ `"Sell"` xuống.
+> 
+> Thuật toán Lan truyền ngược (Backpropagation) sẽ truyền các Gradient này ngược về các lớp bên dưới. Trọng số (weights) $W$ chi phối trực tiếp đến các từ này sẽ được cập nhật theo công thức: 
+> $$ W_{mới} = W_{cũ} - \eta \times \text{Gradient} $$
+> *(Với $\eta$ là Learning Rate)*. Vì Gradient của `"Buy"` là số âm, khi trừ đi số âm sẽ thành phép cộng $\rightarrow$ Trọng số của `"Buy"` được tăng lên. Ở lần huấn luyện tiếp theo, xác suất dự đoán `"Buy"` sẽ tăng từ $0.8$ lên $0.85$, $0.90$... dần tiến tới $1.0$.
+
 > [!TIP]
 > **Ví dụ Tính Toán Hiệu Quả Chi Phí (ROI) của Distillation**
 > - **Chi phí "Chưng cất" (Tạo 1440 mẫu Golden Dataset)**:
