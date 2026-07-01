@@ -234,6 +234,13 @@ flowchart TD
     
     Output["Output = Base_output + (α/r) × ΔW × input"]
 ```
+> 
+> **Diễn giải chi tiết biểu đồ QLoRA:**
+> 1. **Tách nhánh dữ liệu:** Khi có dữ liệu đầu vào (Input), luồng xử lý được chia làm 2 nhánh chạy song song.
+> 2. **Nhánh Base (Não bộ gốc):** Chứa 4 Tỷ tham số nguyên bản của mô hình Qwen3-4B. Toàn bộ trọng số ở đây bị **Đóng băng (Frozen)** hoàn toàn và được ép xuống định dạng 4-bit (NF4). Điều này giúp mô hình không bao giờ bị quên kiến thức cũ, đồng thời tiết kiệm tối đa VRAM (chỉ tốn ~2GB thay vì 8GB).
+> 3. **Nhánh LoRA (Mô-đun học mới):** Là một mạng nơ-ron thu nhỏ chạy song song, sử dụng 2 ma trận nhỏ $A$ và $B$ để tính toán sự thay đổi $\Delta W$. Nhánh này liên tục được huấn luyện và cập nhật bằng toán học đạo hàm, nhưng nó siêu nhẹ vì chỉ chiếm **~1%** tổng số tham số (~20-40M params).
+> 4. **Khuếch đại (Scaling):** Trước khi hợp nhất, kết quả học được từ LoRA sẽ được nhân với hệ số khuếch đại $(\frac{\alpha}{r})$ nhằm nhấn mạnh các tín hiệu tài chính mới mà nó vừa học được.
+> 5. **Hợp nhất (Output):** Kết quả cuối cùng là sự cộng gộp giữa tư duy ngôn ngữ chung của "Não bộ gốc" và những kiến thức tài chính chuyên sâu vừa được học từ "LoRA".
 
 #### Tại sao chọn QLoRA thay vì Full Fine-Tuning?
 
